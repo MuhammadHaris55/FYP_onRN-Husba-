@@ -16,11 +16,12 @@ import {
 } from 'react-native';
 import ActionButton from 'react-native-action-button';
 import Icon from 'react-native-vector-icons/Ionicons';
-import {GiftedChat} from 'react-native-gifted-chat';
 import Geolocation from '@react-native-community/geolocation';
-import {Alert} from 'react-native';
 import {useTheme} from 'react-native-paper';
 import LinearGradient from 'react-native-linear-gradient';
+
+import firebase from '../config/firebase';
+import {ActivityIndicator} from 'react-native';
 
 const {width, height} = Dimensions.get('window');
 
@@ -31,14 +32,15 @@ const ExploreScreen = () => {
   const [messages, setMessages] = useState([]);
   const [currentLongitude, setCurrentLongitude] = useState('');
   const [currentLatitude, setCurrentLatitude] = useState('');
-  const [locationStatus, setLocationStatus] = useState('');
-  const [latlng, setLatlng] = useState('');
+  const [allMarkers, setMarkers] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [reason, setReason] = useState('');
   const {colors} = useTheme();
   const [region, setRegion] = useState({
     latitude: 24.8245547,
     longitude: 67.082216,
-    latitudeDelta: 0.12,
-    longitudeDelta: 0.12,
+    latitudeDelta: 0.14,
+    longitudeDelta: 0.14,
   });
 
   useEffect(() => {
@@ -61,12 +63,13 @@ const ExploreScreen = () => {
             getOneTimeLocation();
             // subscribeLocationLocation();
           } else {
-            setLocationStatus('Permission Denied');
+            // setLocationStatus('Permission Denied');
           }
         } catch (err) {
           console.warn(err);
         }
       }
+      getLocations();
     };
     requestLocationPermission();
     getOneTimeLocation();
@@ -84,29 +87,13 @@ const ExploreScreen = () => {
     ]);
   }, []);
   const getOneTimeLocation = () => {
-    setLocationStatus('Getting Location ...');
+    // setLocationStatus('Getting Location ...');
     Geolocation.getCurrentPosition(
-      //Will give you the current location
       position => {
-        setLocationStatus('You are Here');
         setRegion({...region, ...position.coords});
-
-        //getting the Longitude from the location json
-        const currentLongitude = JSON.stringify(position.coords.longitude);
-
-        //getting the Latitude from the location json
-        const currentLatitude = JSON.stringify(position.coords.latitude);
-
-        // setLocationStatus(currentLongitude+","+currentLatitude)
-        //Setting Longitude state
-        setCurrentLongitude(currentLongitude);
-
-        //Setting Longitude state
-        setCurrentLatitude(currentLatitude);
-        // setLatlng(24.8245547+","+67.082216)
       },
       error => {
-        setLocationStatus(error.message);
+        // setLocationStatus(error.message);
       },
       {
         enableHighAccuracy: false,
@@ -115,17 +102,72 @@ const ExploreScreen = () => {
       },
     );
   };
-  const onSend = useCallback((messages = []) => {
-    setMessages(previousMessages =>
-      GiftedChat.append(previousMessages, messages),
-    );
-  }, []);
 
-  // const coordinate = {
-  //   latitude: setCurrentLongitude,
-  //   longitude: setCurrentLatitude,
-  // },
-  console.log(setLatlng);
+  const getLocations = async () => {
+    try {
+      firebase
+        .firestore()
+        .collection('locations')
+        .onSnapshot(docs => {
+          const markers = [];
+          docs.forEach(doc => {
+            var startDate = new Date(doc.data().time);
+            var endDate = new Date();
+            var diff =
+              (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60);
+            if (diff >= 24) {
+              firebase
+                .firestore()
+                .collection('locations')
+                .doc(doc.id)
+                .delete();
+            } else {
+              markers.push(doc.data());
+            }
+          });
+          console.log(
+            '🚀 ~ file: ExploreScreen.js ~ line 115 ~ getLocations ~ markers',
+            markers,
+          );
+          setMarkers(markers);
+        });
+    } catch (error) {
+      alert('Sorry, Something went wrong');
+    }
+  };
+
+  const addLocation = () => {
+    if (reason == '') {
+      return alert('Error, Kindly add a reason.');
+    }
+    setLoading(true);
+    Geolocation.getCurrentPosition(
+      ({coords: {latitude, longitude}}) => {
+        firebase
+          .firestore()
+          .collection('locations')
+          .add({latitude, longitude, time: new Date().toString(), reason})
+          .then(() => {
+            setModalVisible(false);
+            setLoading(false);
+          })
+          .catch(e => {
+            setLoading(false);
+            alert('Sorry, Something went wrong');
+          });
+      },
+      error => {
+        setLoading(false);
+        alert('Sorry, Something went wrong');
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 30000,
+        maximumAge: 1000,
+      },
+    );
+  };
+
   return (
     <>
       <MapView
@@ -133,16 +175,24 @@ const ExploreScreen = () => {
         style={styles.map}
         showsUserLocation
         region={region}>
-        {/* <Marker coordinate={setLatlng} 
-      title={"My Location "}
-      description={"Karachi,Pakistan "}
-    /> */}
+        {allMarkers.map(marker => (
+          <Marker
+            key={Math.random().toString()}
+            coordinate={marker}
+            title={marker.reason}
+            description={`${new Date(
+              marker.time,
+            ).toLocaleTimeString()} ${new Date(
+              marker.time,
+            ).toLocaleDateString()}`}
+          />
+        ))}
       </MapView>
 
       <ActionButton buttonColor="rgba(231,76,60,1)">
         <ActionButton.Item
           buttonColor="#9b59b6"
-          title="Add Trafic Reason "
+          title="Add Traffic Jam Reason "
           onPress={() => setModalVisible(true)}>
           <Icon name="md-create" style={styles.actionButtonIcon} />
         </ActionButton.Item>
@@ -153,7 +203,7 @@ const ExploreScreen = () => {
         transparent={true}
         visible={modalVisible}
         onRequestClose={() => {
-          Alert.alert('Modal has been closed.');
+          setModalVisible(false);
         }}>
         <View style={styles.centeredView}>
           <View style={styles.modalView}>
@@ -164,38 +214,43 @@ const ExploreScreen = () => {
               }}>
               <Text style={styles.textStyle}> x </Text>
             </TouchableHighlight>
-            <TextInput
-              placeholder="Please enter reason.."
-              placeholderTextColor="#666666"
-              style={[
-                styles.textInput,
-                {
-                  color: colors.text,
-                },
-              ]}
-              autoCapitalize="none"
-              // onChangeText={val => handlePasswordChange(val)}
-            />
-            <ScrollView horizontal contentContainerStyle={{height: 40}}>
-              {reasons.map(item => (
-                <Text style={styles.chipStyles}>{item}</Text>
-              ))}
-            </ScrollView>
-            <TouchableOpacity style={styles.signIn} onPress={() => {}}>
-              <LinearGradient
-                colors={['#08d4c4', '#01ab9d']}
-                style={styles.signIn}>
-                <Text
-                  style={[
-                    styles.textSign,
-                    {
-                      color: '#fff',
-                    },
-                  ]}>
-                  Sign In
-                </Text>
-              </LinearGradient>
-            </TouchableOpacity>
+            <View>
+              <Text>Reason</Text>
+              <TextInput
+                placeholder="Please enter reason.."
+                placeholderTextColor="#666666"
+                style={[styles.textInput, {color: colors.text}]}
+                value={reason}
+                onChangeText={val => setReason(val)}
+              />
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                {reasons.map(item => (
+                  <TouchableOpacity onPress={() => setReason(item)}>
+                    <Text style={styles.chipStyles}>{item}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              <TouchableOpacity style={styles.signIn} onPress={addLocation}>
+                <LinearGradient
+                  colors={['#2196F3', '#69b7f7']}
+                  style={styles.signIn}>
+                  <Text
+                    style={[
+                      styles.textSign,
+                      {
+                        color: '#fff',
+                      },
+                    ]}>
+                    Add
+                  </Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+            {loading && (
+              <View style={styles.indicator}>
+                <ActivityIndicator size="large" />
+              </View>
+            )}
           </View>
         </View>
       </Modal>
@@ -215,7 +270,7 @@ const styles = StyleSheet.create({
   },
   modalView: {
     width: '100%',
-    height: 300,
+    height: 240,
     // margin: 20,
     backgroundColor: 'white',
     borderRadius: 20,
@@ -232,7 +287,6 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   openButton: {
-    backgroundColor: '#F194FF',
     borderRadius: 20,
     width: 40,
     height: 40,
@@ -263,19 +317,29 @@ const styles = StyleSheet.create({
   chipStyles: {
     padding: 6,
     paddingHorizontal: 12,
-    backgroundColor: 'rgba(242, 38, 19, 0.6)',
-    borderColor: 'rgba(242, 38, 19, 1)',
-    borderWidth: 3,
-    color: '#fff',
+    // backgroundColor: 'rgba(242, 38, 19, 0.6)',
+    borderColor: '#2196F3',
+    borderWidth: 2,
     borderRadius: 18,
     margin: 10,
     height: 30,
   },
   signIn: {
-    height: 50,
+    height: 40,
     justifyContent: 'center',
     alignItems: 'center',
     borderRadius: 10,
     paddingHorizontal: 20,
+    alignSelf: 'flex-end',
+  },
+  indicator: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    left: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
